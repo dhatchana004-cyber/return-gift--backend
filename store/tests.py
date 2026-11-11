@@ -140,6 +140,58 @@ class StoreApiTests(APITestCase):
         self.assertIsNone(order.delivery_distance_km)
         self.assertEqual(self.client.get("/api/orders").data["orders"][0]["id"], order.id)
 
+    def test_product_offer_is_editable_displayed_and_applied_to_checkout(self):
+        self.client.force_authenticate(self.admin)
+        updated = self.client.patch(
+            f"/api/admin/products/{self.product.id}",
+            {"offerPercentage": 20},
+            format="json",
+        )
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["product"]["offer_percentage"], 20)
+        self.assertEqual(updated.data["product"]["final_price"], "2800.00")
+
+        self.client.force_authenticate(self.customer)
+        catalog_product = self.client.get("/api/products").data["products"][0]
+        self.assertEqual(catalog_product["offer_percentage"], 20)
+        self.assertEqual(catalog_product["final_price"], "2800.00")
+        self.client.post("/api/cart/items", {"productId": self.product.id, "quantity": 2}, format="json")
+        cart_item = self.client.get("/api/cart").data["items"][0]
+        self.assertEqual(cart_item["price"], "2800.00")
+        self.assertEqual(cart_item["original_price"], "3500.00")
+
+        response = self.client.post(
+            "/api/orders/checkout",
+            {
+                "shippingAddress": {
+                    "fullName": "A Boutique Customer",
+                    "phone": "+91 9876543210",
+                    "addressLine1": "12 Market Road",
+                    "city": "Chennai",
+                    "state": "Tamil Nadu",
+                    "postalCode": "600001",
+                    "country": "India",
+                },
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        order = Order.objects.get(user=self.customer)
+        self.assertEqual(order.subtotal, Decimal("5600.00"))
+        self.assertEqual(order.items.get().unit_price, Decimal("2800.00"))
+
+    def test_product_offer_percentage_must_be_between_zero_and_one_hundred(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.patch(
+            f"/api/admin/products/{self.product.id}",
+            {"offerPercentage": 101},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.offer_percentage, 0)
+
     def test_customer_can_cancel_pending_order_once_and_stock_is_restored(self):
         self.client.force_authenticate(self.customer)
         self.client.post("/api/cart/items", {"productId": self.product.id, "quantity": 2}, format="json")

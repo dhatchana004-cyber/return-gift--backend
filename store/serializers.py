@@ -94,8 +94,11 @@ class ProductSerializer(serializers.ModelSerializer):
     category_slug = serializers.CharField(source="category.slug", read_only=True, default="")
     category_id = serializers.IntegerField(read_only=True, allow_null=True)
     image_url = serializers.SerializerMethodField()
+    final_price = serializers.DecimalField(source="discounted_price", max_digits=10, decimal_places=2, read_only=True)
+    offer_percentage = serializers.IntegerField(read_only=True)
     is_customizable = serializers.BooleanField(read_only=True)
     is_active = serializers.BooleanField(read_only=True)
+    offerPercentage = serializers.IntegerField(source="offer_percentage", write_only=True, required=False, min_value=0, max_value=100)
     isCustomizable = serializers.BooleanField(source="is_customizable", write_only=True, required=False)
     isActive = serializers.BooleanField(source="is_active", write_only=True, required=False)
     categoryId = serializers.PrimaryKeyRelatedField(
@@ -106,9 +109,9 @@ class ProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = [
-            "id", "name", "slug", "description", "price", "stock", "is_customizable", "is_active",
-            "category_id", "categoryId", "category_name", "category_slug", "image_url", "images",
-            "isCustomizable", "isActive", "created_at",
+            "id", "name", "slug", "description", "price", "final_price", "offer_percentage", "stock",
+            "is_customizable", "is_active", "category_id", "categoryId", "category_name", "category_slug",
+            "image_url", "images", "offerPercentage", "isCustomizable", "isActive", "created_at",
         ]
         read_only_fields = ["id", "slug", "created_at"]
 
@@ -127,14 +130,19 @@ class CartItemSerializer(serializers.ModelSerializer):
     product_id = serializers.IntegerField(source="product.id", read_only=True)
     name = serializers.CharField(source="product.name", read_only=True)
     slug = serializers.CharField(source="product.slug", read_only=True)
-    price = serializers.DecimalField(source="product.price", max_digits=10, decimal_places=2, read_only=True)
+    price = serializers.DecimalField(source="product.discounted_price", max_digits=10, decimal_places=2, read_only=True)
+    original_price = serializers.DecimalField(source="product.price", max_digits=10, decimal_places=2, read_only=True)
+    offer_percentage = serializers.IntegerField(source="product.offer_percentage", read_only=True)
     stock = serializers.IntegerField(source="product.stock", read_only=True)
     is_customizable = serializers.BooleanField(source="product.is_customizable", read_only=True)
     image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = CartItem
-        fields = ["id", "product_id", "name", "slug", "price", "stock", "quantity", "is_customizable", "image_url"]
+        fields = [
+            "id", "product_id", "name", "slug", "price", "original_price", "offer_percentage", "stock",
+            "quantity", "is_customizable", "image_url",
+        ]
 
     def get_image_url(self, obj):
         image = obj.product.images.order_by("-is_primary", "id").first()

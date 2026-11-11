@@ -640,7 +640,7 @@ def create_order(request):
             cart_product_ids = {item.product_id for item in items}
             if any(product_id not in cart_product_ids for product_id in customizations):
                 return Response({"error": "Customization was submitted for a product not in your cart."}, status=status.HTTP_400_BAD_REQUEST)
-            subtotal = 0
+            subtotal = Decimal("0.00")
             for item in items:
                 product = Product.objects.select_for_update().get(pk=item.product_id)
                 if item.quantity > product.stock:
@@ -648,7 +648,7 @@ def create_order(request):
                 customization = customizations.get(item.product_id)
                 if customization and (customization["giftMessage"] or customization["printedName"]) and not product.is_customizable:
                     return Response({"error": f"{product.name} does not support customization."}, status=status.HTTP_400_BAD_REQUEST)
-                subtotal += product.price * item.quantity
+                subtotal += product.discounted_price * item.quantity
             order = Order.objects.create(
                 user=request.user,
                 subtotal=subtotal,
@@ -665,7 +665,7 @@ def create_order(request):
                     order=order,
                     product=product,
                     product_name=product.name,
-                    unit_price=product.price,
+                    unit_price=product.discounted_price,
                     quantity=item.quantity,
                     gift_message=customization.get("giftMessage", ""),
                     printed_name=customization.get("printedName", ""),

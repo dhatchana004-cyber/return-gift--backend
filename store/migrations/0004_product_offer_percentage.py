@@ -1,0 +1,23 @@
+import django.core.validators
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("store", "0003_deliverychargesettings_order_delivery_distance_km"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="product",
+            name="offer_percentage",
+            field=models.PositiveSmallIntegerField(
+                default=0,
+                validators=[
+                    django.core.validators.MinValueValidator(0),
+                    django.core.validators.MaxValueValidator(100),
+                ],
+            ),
+        ),
+    ]

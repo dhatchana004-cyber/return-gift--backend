@@ -1,8 +1,9 @@
 import uuid
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils.text import slugify
 
@@ -59,6 +60,10 @@ class Product(models.Model):
     slug = models.SlugField(max_length=200, unique=True)
     description = models.TextField()
     price = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    offer_percentage = models.PositiveSmallIntegerField(
+        default=0,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+    )
     stock = models.PositiveIntegerField(default=0)
     is_customizable = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
@@ -83,6 +88,11 @@ class Product(models.Model):
     def image_url(self):
         image = self.images.order_by("-is_primary", "id").first()
         return image.url if image else ""
+
+    @property
+    def discounted_price(self):
+        discount = Decimal(100 - self.offer_percentage) / Decimal(100)
+        return (self.price * discount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     def __str__(self):
         return self.name
