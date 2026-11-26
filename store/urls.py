@@ -36,6 +36,8 @@ urlpatterns = [
     path("admin/products/<int:product_id>/images/<int:image_id>", views.admin_product_image_detail),
     path("admin/categories", views.admin_categories),
     path("admin/categories/<int:category_id>", views.admin_category_detail),
+    path("admin/categories/<int:category_id>/image", views.admin_category_image),
+    path("admin/categories/<int:category_id>/trending", views.admin_toggle_category_trending),
     path("admin/delivery-charge-settings", views.admin_delivery_charge_settings),
     path("admin/districts/bulk", views.admin_districts_bulk_update),
     path("admin/customers", views.admin_customers),

@@ -39,7 +39,9 @@ class Category(models.Model):
     name = models.CharField(max_length=100, unique=True)
     slug = models.SlugField(max_length=120, unique=True)
     description = models.TextField(blank=True)
+    image = models.ImageField(upload_to="categories/", blank=True, null=True)
     image_url = models.URLField(max_length=1000, blank=True)
+    is_trending = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

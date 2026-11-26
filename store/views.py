@@ -532,7 +532,10 @@ def quotation(request):
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def categories(request):
-    return Response({"categories": CategorySerializer(_categories_queryset(), many=True).data})
+    queryset = _categories_queryset()
+    if request.query_params.get("trending") == "true":
+        queryset = queryset.filter(is_trending=True)
+    return Response({"categories": CategorySerializer(queryset, many=True, context={"request": request}).data})
 
 
 @api_view(["GET"])
@@ -912,6 +915,20 @@ def admin_product_detail(request, product_id):
     return Response({"product": _serialize_product(product, request)})
 
 
+def _validate_uploaded_image(image_file):
+    from PIL import Image, UnidentifiedImageError
+
+    if image_file.size > 5 * 1024 * 1024:
+        return Response({"error": "Each image must be 5 MB or smaller."}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+    try:
+        with Image.open(image_file) as image:
+            image.verify()
+        image_file.seek(0)
+    except (UnidentifiedImageError, OSError):
+        return Response({"error": "An uploaded file is not a valid image."}, status=status.HTTP_400_BAD_REQUEST)
+    return None
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 @parser_classes([MultiPartParser, FormParser])
@@ -923,16 +940,10 @@ def admin_product_images(request, product_id):
     files = request.FILES.getlist("images")
     if not files or len(files) > 5:
         return Response({"error": "Choose between one and five product images."}, status=status.HTTP_400_BAD_REQUEST)
-    from PIL import Image, UnidentifiedImageError
-
     for image_file in files:
-        if image_file.size > 5 * 1024 * 1024:
-            return Response({"error": "Each image must be 5 MB or smaller."}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
-        try:
-            with Image.open(image_file) as image:
-                image.verify()
-        except (UnidentifiedImageError, OSError):
-            return Response({"error": "An uploaded file is not a valid image."}, status=status.HTTP_400_BAD_REQUEST)
+        error_response = _validate_uploaded_image(image_file)
+        if error_response:
+            return error_response
     is_first = not product.images.exists()
     for index, image_file in enumerate(files):
         ProductImage.objects.create(
@@ -1049,32 +1060,90 @@ def admin_districts_bulk_update(request):
 
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
 def admin_categories(request):
     denied = _admin_only(request)
     if denied:
         return denied
     if request.method == "GET":
-        return Response({"categories": CategorySerializer(_categories_queryset(), many=True).data})
+        return Response({"categories": CategorySerializer(_categories_queryset(), many=True, context={"request": request}).data})
+    image_file = request.FILES.get("image")
+    if image_file:
+        error_response = _validate_uploaded_image(image_file)
+        if error_response:
+            return error_response
     serializer = CategorySerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     category = serializer.save()
-    return Response({"category": CategorySerializer(category).data}, status=status.HTTP_201_CREATED)
+    if image_file:
+        category.image = image_file
+        category.save(update_fields=["image"])
+    return Response({"category": CategorySerializer(category, context={"request": request}).data}, status=status.HTTP_201_CREATED)
 
 
 @api_view(["PATCH", "DELETE"])
 @permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
 def admin_category_detail(request, category_id):
     denied = _admin_only(request)
     if denied:
         return denied
     category = get_object_or_404(Category, pk=category_id)
     if request.method == "DELETE":
-        category.delete()
+        if category.image:
+            storage = category.image.storage
+            image_name = category.image.name
+            category.delete()
+            if image_name:
+                try:
+                    storage.delete(image_name)
+                except OSError:
+                    logger.exception("Could not delete category image %s", image_name)
+        else:
+            category.delete()
         return Response({"message": "Category deleted."})
     serializer = CategorySerializer(category, data=request.data, partial=True)
     serializer.is_valid(raise_exception=True)
     serializer.save()
-    return Response({"category": CategorySerializer(category).data})
+    return Response({"category": CategorySerializer(category, context={"request": request}).data})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
+def admin_category_image(request, category_id):
+    denied = _admin_only(request)
+    if denied:
+        return denied
+    category = get_object_or_404(Category, pk=category_id)
+    image_file = request.FILES.get("image")
+    if not image_file:
+        return Response({"error": "Please select an image file to upload."}, status=status.HTTP_400_BAD_REQUEST)
+    error_response = _validate_uploaded_image(image_file)
+    if error_response:
+        return error_response
+    old_storage = category.image.storage if category.image else None
+    old_name = category.image.name if category.image else ""
+    category.image = image_file
+    category.save(update_fields=["image"])
+    if old_storage and old_name and old_name != category.image.name:
+        try:
+            old_storage.delete(old_name)
+        except OSError:
+            logger.exception("Could not delete replaced category image %s", old_name)
+    return Response({"category": CategorySerializer(category, context={"request": request}).data})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def admin_toggle_category_trending(request, category_id):
+    denied = _admin_only(request)
+    if denied:
+        return denied
+    category = get_object_or_404(Category, pk=category_id)
+    category.is_trending = not category.is_trending
+    category.save(update_fields=["is_trending"])
+    return Response({"category": CategorySerializer(category, context={"request": request}).data})
 
 
 @api_view(["GET"])

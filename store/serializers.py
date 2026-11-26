@@ -69,11 +69,22 @@ class CustomerRegistrationSerializer(serializers.Serializer):
 
 class CategorySerializer(serializers.ModelSerializer):
     product_count = serializers.IntegerField(read_only=True, default=0)
+    image_url = serializers.SerializerMethodField()
+    imageUrlInput = serializers.URLField(source="image_url", write_only=True, required=False, allow_blank=True)
 
     class Meta:
         model = Category
-        fields = ["id", "name", "slug", "description", "image_url", "product_count"]
+        fields = ["id", "name", "slug", "description", "image_url", "imageUrlInput", "is_trending", "product_count"]
         read_only_fields = ["slug", "product_count"]
+
+    def get_image_url(self, obj):
+        if obj.image:
+            url = obj.image.url
+            if url.startswith(("http://", "https://")):
+                return url
+            request = self.context.get("request")
+            return request.build_absolute_uri(url) if request else url
+        return obj.image_url or ""
 
 
 class ProductImageSerializer(serializers.ModelSerializer):
