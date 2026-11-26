@@ -69,13 +69,28 @@ class CustomerRegistrationSerializer(serializers.Serializer):
 
 class CategorySerializer(serializers.ModelSerializer):
     product_count = serializers.IntegerField(read_only=True, default=0)
+    price = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, default=0, min_value=0)
+    final_price = serializers.DecimalField(source="discounted_price", max_digits=10, decimal_places=2, read_only=True)
+    offer_percentage = serializers.IntegerField(required=False, default=0, min_value=0, max_value=100)
     image_url = serializers.SerializerMethodField()
     imageUrlInput = serializers.URLField(source="image_url", write_only=True, required=False, allow_blank=True)
 
     class Meta:
         model = Category
-        fields = ["id", "name", "slug", "description", "image_url", "imageUrlInput", "is_trending", "product_count"]
-        read_only_fields = ["slug", "product_count"]
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "description",
+            "price",
+            "final_price",
+            "offer_percentage",
+            "image_url",
+            "imageUrlInput",
+            "is_trending",
+            "product_count",
+        ]
+        read_only_fields = ["slug", "final_price", "product_count"]
 
     def get_image_url(self, obj):
         if obj.image:

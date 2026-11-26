@@ -39,6 +39,11 @@ class Category(models.Model):
     name = models.CharField(max_length=100, unique=True)
     slug = models.SlugField(max_length=120, unique=True)
     description = models.TextField(blank=True)
+    price = models.DecimalField(max_digits=10, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+    offer_percentage = models.PositiveSmallIntegerField(
+        default=0,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+    )
     image = models.ImageField(upload_to="categories/", blank=True, null=True)
     image_url = models.URLField(max_length=1000, blank=True)
     is_trending = models.BooleanField(default=False, db_index=True)
@@ -52,6 +57,11 @@ class Category(models.Model):
         if not self.slug or (self.pk and Category.objects.filter(pk=self.pk).exclude(name=self.name).exists()):
             self.slug = slugify(self.name)
         super().save(*args, **kwargs)
+
+    @property
+    def discounted_price(self):
+        discount = Decimal(100 - self.offer_percentage) / Decimal(100)
+        return (self.price * discount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     def __str__(self):
         return self.name
@@ -167,7 +177,7 @@ class Order(models.Model):
         FAILED = "failed", "Failed"
         REFUNDED = "refunded", "Refunded"
 
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="orders")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="orders")
     status = models.CharField(max_length=30, choices=Status.choices, default=Status.PENDING)
     subtotal = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
     delivery_charge = models.DecimalField(max_digits=10, decimal_places=2, default=0, validators=[MinValueValidator(0)])

@@ -847,6 +847,21 @@ def order_payment(request, order_id):
     )
 
 
+def _order_customer_info(order):
+    if order.user:
+        return {
+            "name": order.user.name,
+            "email": order.user.email,
+            "phone": getattr(getattr(order.user, "profile", None), "phone", ""),
+        }
+    addr = order.shipping_address if isinstance(order.shipping_address, dict) else {}
+    return {
+        "name": addr.get("fullName") or "Deleted customer",
+        "email": "—",
+        "phone": addr.get("phone") or "",
+    }
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def admin_overview(request):
@@ -865,23 +880,21 @@ def admin_overview(request):
         "low_stock": Product.objects.filter(is_active=True, stock__lte=5).count(),
         "new_inquiries": Quotation.objects.filter(status=Quotation.Status.NEW).count(),
     }
-    recent = Order.objects.select_related("user").order_by("-created_at")[:8]
-    return Response(
-        {
-            "metrics": metrics,
-            "recentOrders": [
-                {
-                    "id": order.id,
-                    "status": order.status,
-                    "subtotal": str(order.total),
-                    "created_at": order.created_at,
-                    "customer_name": order.user.name,
-                    "customer_email": order.user.email,
-                }
-                for order in recent
-            ],
-        }
-    )
+    recent = Order.objects.select_related("user", "user__profile").order_by("-created_at")[:8]
+    recent_orders = []
+    for order in recent:
+        customer = _order_customer_info(order)
+        recent_orders.append(
+            {
+                "id": order.id,
+                "status": order.status,
+                "subtotal": str(order.total),
+                "created_at": order.created_at,
+                "customer_name": customer["name"],
+                "customer_email": customer["email"],
+            }
+        )
+    return Response({"metrics": metrics, "recentOrders": recent_orders})
 
 
 @api_view(["GET", "POST"])
@@ -1173,6 +1186,17 @@ def admin_customers(request):
     return Response({"customers": result})
 
 
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def admin_customer_detail(request, customer_id):
+    denied = _admin_only(request)
+    if denied:
+        return denied
+    customer = get_object_or_404(User, pk=customer_id, is_staff=False, is_superuser=False)
+    customer.delete()
+    return Response({"message": "Customer deleted."})
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def admin_messages(request):
@@ -1214,13 +1238,14 @@ def admin_orders(request):
     if denied:
         return denied
     result = []
-    for order in Order.objects.select_related("user").prefetch_related("items").all():
+    for order in Order.objects.select_related("user", "user__profile").prefetch_related("items").all():
+        customer = _order_customer_info(order)
         row = OrderSerializer(order).data
         row.update(
             {
-                "customer_name": order.user.name,
-                "customer_email": order.user.email,
-                "customer_phone": getattr(getattr(order.user, "profile", None), "phone", ""),
+                "customer_name": customer["name"],
+                "customer_email": customer["email"],
+                "customer_phone": customer["phone"],
             }
         )
         result.append(row)
@@ -1303,20 +1328,22 @@ def admin_orders_export(request, export_format):
     denied = _admin_only(request)
     if denied:
         return denied
-    orders_data = Order.objects.select_related("user").order_by("-created_at")
-    rows = [
-        [
-            order.id,
-            order.status,
-            float(order.total),
-            order.created_at.strftime("%Y-%m-%d %H:%M"),
-            order.user.name,
-            order.user.email,
-            getattr(getattr(order.user, "profile", None), "phone", ""),
-            str(order.shipping_address),
-        ]
-        for order in orders_data
-    ]
+    orders_data = Order.objects.select_related("user", "user__profile").order_by("-created_at")
+    rows = []
+    for order in orders_data:
+        customer = _order_customer_info(order)
+        rows.append(
+            [
+                order.id,
+                order.status,
+                float(order.total),
+                order.created_at.strftime("%Y-%m-%d %H:%M"),
+                customer["name"],
+                customer["email"],
+                customer["phone"],
+                str(order.shipping_address),
+            ]
+        )
     headers = ["Order ID", "Status", "Total", "Date", "Customer", "Email", "Phone", "Delivery address"]
     if export_format == "xlsx":
         return _xlsx_response("vedhika-orders.xlsx", "Orders", headers, rows)

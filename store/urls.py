@@ -41,6 +41,7 @@ urlpatterns = [
     path("admin/delivery-charge-settings", views.admin_delivery_charge_settings),
     path("admin/districts/bulk", views.admin_districts_bulk_update),
     path("admin/customers", views.admin_customers),
+    path("admin/customers/<int:customer_id>", views.admin_customer_detail),
     path("admin/messages", views.admin_messages),
     path("admin/quotations", views.admin_quotations),
     path("admin/quotations/<int:quotation_id>/status", views.admin_quotation_status),
