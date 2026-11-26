@@ -52,4 +52,7 @@ urlpatterns = [
     path("admin/reports/customers.pdf", views.admin_customers_export, {"export_format": "pdf"}),
     path("payments/razorpay/create", views.create_razorpay_order),
     path("payments/razorpay/verify", views.verify_razorpay_payment),
+    path("storefront-settings", views.storefront_settings),
+    path("admin/storefront-settings", views.admin_storefront_settings),
+    path("admin/products/<int:product_id>/trending", views.admin_toggle_trending),
 ]

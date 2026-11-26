@@ -47,6 +47,7 @@ from .models import (
     Product,
     ProductImage,
     Quotation,
+    StorefrontSettings,
     User,
     Wishlist,
 )
@@ -63,6 +64,7 @@ from .serializers import (
     ProductSerializer,
     QuotationSerializer,
     ShippingAddressSerializer,
+    StorefrontSettingsSerializer,
     UserSummarySerializer,
     WishlistSerializer,
 )
@@ -545,6 +547,8 @@ def products(request):
         )
     if category_slug:
         queryset = queryset.filter(category__slug=category_slug)
+    if request.query_params.get("trending") == "true":
+        queryset = queryset.filter(is_trending=True)
     try:
         min_price = request.query_params.get("minPrice")
         max_price = request.query_params.get("maxPrice")
@@ -1435,3 +1439,38 @@ def verify_razorpay_payment(request):
         logger.error("Order creation failed: %s", exc)
         return Response({"error": "Order could not be placed. Please try again."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     return Response({"order": OrderSerializer(order).data}, status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def admin_toggle_trending(request, product_id):
+    denied = _admin_only(request)
+    if denied:
+        return denied
+    product = get_object_or_404(Product, pk=product_id)
+    product.is_trending = not product.is_trending
+    product.save(update_fields=["is_trending", "updated_at"])
+    return Response({"product": _serialize_product(product, request)})
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def storefront_settings(request):
+    settings_obj = StorefrontSettings.get_solo()
+    return Response({"settings": StorefrontSettingsSerializer(settings_obj).data})
+
+
+@api_view(["GET", "PUT", "PATCH"])
+@permission_classes([IsAuthenticated])
+def admin_storefront_settings(request):
+    denied = _admin_only(request)
+    if denied:
+        return denied
+    settings_obj = StorefrontSettings.get_solo()
+    if request.method in ("PUT", "PATCH"):
+        serializer = StorefrontSettingsSerializer(settings_obj, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response({"settings": serializer.data, "message": "Storefront settings updated successfully."})
+    return Response({"settings": StorefrontSettingsSerializer(settings_obj).data})
+

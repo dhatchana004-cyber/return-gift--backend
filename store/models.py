@@ -39,6 +39,7 @@ class Category(models.Model):
     name = models.CharField(max_length=100, unique=True)
     slug = models.SlugField(max_length=120, unique=True)
     description = models.TextField(blank=True)
+    image_url = models.URLField(max_length=1000, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -66,6 +67,7 @@ class Product(models.Model):
     )
     stock = models.PositiveIntegerField(default=0)
     is_customizable = models.BooleanField(default=False)
+    is_trending = models.BooleanField(default=False, db_index=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -303,3 +305,22 @@ class ContactMessage(models.Model):
 
     def __str__(self):
         return f"Message from {self.name}"
+
+
+class StorefrontSettings(models.Model):
+    experience_eyebrow = models.CharField(max_length=120, default="THE BOUTIQUE EXPERIENCE")
+    experience_title = models.CharField(max_length=180, default="vedhika Boutique")
+    experience_description = models.TextField(
+        default="Step into our sanctuary of timeless Indian fashion. From opulent Kanchipuram mulberry silks and hand-embroidered bridal couture to contemporary festive kurtis, every piece at Vedhika Boutique is handpicked to celebrate your grace."
+    )
+    trending_title = models.CharField(max_length=120, default="Trending Now")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @classmethod
+    def get_solo(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def __str__(self):
+        return "Storefront settings"
+

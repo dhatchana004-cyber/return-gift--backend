@@ -13,6 +13,7 @@ from .models import (
     Product,
     ProductImage,
     Quotation,
+    StorefrontSettings,
     User,
     Wishlist,
 )
@@ -71,7 +72,7 @@ class CategorySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Category
-        fields = ["id", "name", "slug", "description", "product_count"]
+        fields = ["id", "name", "slug", "description", "image_url", "product_count"]
         read_only_fields = ["slug", "product_count"]
 
 
@@ -99,9 +100,11 @@ class ProductSerializer(serializers.ModelSerializer):
     final_price = serializers.DecimalField(source="discounted_price", max_digits=10, decimal_places=2, read_only=True)
     offer_percentage = serializers.IntegerField(read_only=True)
     is_customizable = serializers.BooleanField(read_only=True)
+    is_trending = serializers.BooleanField(read_only=True)
     is_active = serializers.BooleanField(read_only=True)
     offerPercentage = serializers.IntegerField(source="offer_percentage", write_only=True, required=False, min_value=0, max_value=100)
     isCustomizable = serializers.BooleanField(source="is_customizable", write_only=True, required=False)
+    isTrending = serializers.BooleanField(source="is_trending", write_only=True, required=False)
     isActive = serializers.BooleanField(source="is_active", write_only=True, required=False)
     categoryId = serializers.PrimaryKeyRelatedField(
         source="category", queryset=Category.objects.all(), write_only=True, required=False, allow_null=True
@@ -112,8 +115,8 @@ class ProductSerializer(serializers.ModelSerializer):
         model = Product
         fields = [
             "id", "name", "slug", "description", "price", "final_price", "offer_percentage", "stock",
-            "is_customizable", "is_active", "category_id", "categoryId", "category_name", "category_slug",
-            "image_url", "images", "offerPercentage", "isCustomizable", "isActive", "created_at",
+            "is_customizable", "is_trending", "is_active", "category_id", "categoryId", "category_name", "category_slug",
+            "image_url", "images", "offerPercentage", "isCustomizable", "isTrending", "isActive", "created_at",
         ]
         read_only_fields = ["id", "slug", "created_at"]
 
@@ -238,3 +241,10 @@ class WishlistSerializer(serializers.ModelSerializer):
     class Meta:
         model = Wishlist
         fields = ["id", "product", "created_at"]
+
+
+class StorefrontSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StorefrontSettings
+        fields = ["experience_eyebrow", "experience_title", "experience_description", "trending_title", "updated_at"]
+
