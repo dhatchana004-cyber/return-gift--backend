@@ -161,7 +161,7 @@ def _nominatim_lookup(address):
         headers={"User-Agent": "VedhikaBoutique/1.0 (delivery distance quotes)"},
     )
     try:
-        with urlopen(request, timeout=15) as response:
+        with urlopen(request, timeout=4) as response:
             results = json.loads(response.read().decode("utf-8"))
     except HTTPError as error:
         raise DeliveryDistanceError("OpenStreetMap could not find this delivery location. Please try again.") from error
@@ -208,7 +208,7 @@ def _osm_driving_distance_meters(destination_address, destination_fallback_addre
         headers={"User-Agent": "VedhikaBoutique/1.0 (delivery distance quotes)"},
     )
     try:
-        with urlopen(request, timeout=15) as response:
+        with urlopen(request, timeout=4) as response:
             result = json.loads(response.read().decode("utf-8"))
     except HTTPError as error:
         raise DeliveryDistanceError("The driving-distance service could not calculate this route.") from error
@@ -429,6 +429,8 @@ def login(request):
     if not email or not isinstance(password, str) or not password:
         return Response({"error": "Email and password are required."}, status=status.HTTP_400_BAD_REQUEST)
     user = authenticate(request, email=email, password=password)
+    if not user and password != password.strip():
+        user = authenticate(request, email=email, password=password.strip())
     is_admin_login = request.path.endswith("/admin/login")
     if not user or not user.is_active or (is_admin_login and not user.is_staff):
         return Response({"error": "Email or password is incorrect."}, status=status.HTTP_401_UNAUTHORIZED)

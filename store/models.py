@@ -309,10 +309,11 @@ class ContactMessage(models.Model):
 
 class StorefrontSettings(models.Model):
     experience_eyebrow = models.CharField(max_length=120, default="THE BOUTIQUE EXPERIENCE")
-    experience_title = models.CharField(max_length=180, default="vedhika Boutique")
+    experience_title = models.CharField(max_length=180, default="vedhika Return Gift")
     experience_description = models.TextField(
-        default="Step into our sanctuary of timeless Indian fashion. From opulent Kanchipuram mulberry silks and hand-embroidered bridal couture to contemporary festive kurtis, every piece at Vedhika Boutique is handpicked to celebrate your grace."
+        default="Step into our sanctuary of thoughtful gifting and timeless South Indian craft. From brass diyas, silk potli keepsakes, and personalized favours to bespoke festive hampers, every return gift at Vedhika is curated to celebrate your guests with grace."
     )
+    hero_image_url = models.CharField(max_length=1000, blank=True, default="/boutique-hero-gifts.png")
     trending_title = models.CharField(max_length=120, default="Trending Now")
     updated_at = models.DateTimeField(auto_now=True)
 

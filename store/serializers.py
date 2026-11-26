@@ -246,5 +246,5 @@ class WishlistSerializer(serializers.ModelSerializer):
 class StorefrontSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = StorefrontSettings
-        fields = ["experience_eyebrow", "experience_title", "experience_description", "trending_title", "updated_at"]
+        fields = ["experience_eyebrow", "experience_title", "experience_description", "hero_image_url", "trending_title", "updated_at"]
 
