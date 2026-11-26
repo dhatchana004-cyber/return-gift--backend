@@ -24,6 +24,7 @@ urlpatterns = [
     path("orders", views.orders),
     path("orders/checkout", views.create_order),
     path("delivery/quote", views.delivery_quote),
+    path("districts", views.districts_list),
     path("orders/<int:order_id>/cancel", views.cancel_order),
     path("orders/<int:order_id>/payment", views.order_payment),
     path("contact", views.contact),
@@ -36,6 +37,7 @@ urlpatterns = [
     path("admin/categories", views.admin_categories),
     path("admin/categories/<int:category_id>", views.admin_category_detail),
     path("admin/delivery-charge-settings", views.admin_delivery_charge_settings),
+    path("admin/districts/bulk", views.admin_districts_bulk_update),
     path("admin/customers", views.admin_customers),
     path("admin/messages", views.admin_messages),
     path("admin/quotations", views.admin_quotations),
@@ -48,4 +50,6 @@ urlpatterns = [
     path("admin/reports/orders.pdf", views.admin_orders_export, {"export_format": "pdf"}),
     path("admin/reports/customers.xlsx", views.admin_customers_export, {"export_format": "xlsx"}),
     path("admin/reports/customers.pdf", views.admin_customers_export, {"export_format": "pdf"}),
+    path("payments/razorpay/create", views.create_razorpay_order),
+    path("payments/razorpay/verify", views.verify_razorpay_payment),
 ]

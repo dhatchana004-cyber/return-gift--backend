@@ -1,7 +1,10 @@
+import hashlib
+import hmac
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.core.management import call_command
+from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from .management.commands.seed_catalog import RETURN_GIFT_PRODUCTS
@@ -405,3 +408,77 @@ class StoreApiTests(APITestCase):
             User.objects.get(email="new@example.com").profile.address["addressLine2"],
             "Town Centre",
         )
+
+    @override_settings(RAZORPAY_KEY_ID="rzp_test_key", RAZORPAY_KEY_SECRET="rzp_test_secret")
+    @patch("razorpay.Client")
+    def test_razorpay_create_and_verify_payment_places_paid_order(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_client.order.create.return_value = {"id": "order_rzp_123"}
+        mock_client.payment.fetch.return_value = {
+            "id": "pay_rzp_456",
+            "order_id": "order_rzp_123",
+            "amount": 700000,
+            "currency": "INR",
+            "status": "captured",
+        }
+        mock_client_cls.return_value = mock_client
+
+        DeliveryChargeSettings.objects.create(pk=1, enabled=False)
+        self.client.force_authenticate(self.customer)
+        self.client.post("/api/cart/items", {"productId": self.product.id, "quantity": 2}, format="json")
+
+        shipping_address = {
+            "fullName": "A Boutique Customer",
+            "phone": "+91 9876543210",
+            "addressLine1": "12 Market Road",
+            "city": "Chennai",
+            "state": "Tamil Nadu",
+            "postalCode": "600001",
+            "country": "India",
+        }
+        create_res = self.client.post(
+            "/api/payments/razorpay/create",
+            {"shippingAddress": shipping_address},
+            format="json",
+        )
+        self.assertEqual(create_res.status_code, 200, create_res.data)
+        self.assertEqual(create_res.data["razorpay_order_id"], "order_rzp_123")
+        self.assertEqual(create_res.data["amount"], 700000)
+
+        signature = hmac.new(
+            b"rzp_test_secret",
+            msg=b"order_rzp_123|pay_rzp_456",
+            digestmod=hashlib.sha256,
+        ).hexdigest()
+        verify_res = self.client.post(
+            "/api/payments/razorpay/verify",
+            {
+                "razorpay_order_id": "order_rzp_123",
+                "razorpay_payment_id": "pay_rzp_456",
+                "razorpay_signature": signature,
+                "shippingAddress": shipping_address,
+            },
+            format="json",
+        )
+        self.assertEqual(verify_res.status_code, 201, verify_res.data)
+        order = Order.objects.get(user=self.customer)
+        self.assertEqual(order.payment_method, "razorpay")
+        self.assertEqual(order.payment_status, Order.PaymentStatus.PAID)
+        self.assertEqual(order.status, Order.Status.CONFIRMED)
+        self.assertEqual(Payment.objects.get(order=order).provider_reference, "pay_rzp_456")
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock, 2)
+
+    @override_settings(RAZORPAY_KEY_ID="rzp_test_key", RAZORPAY_KEY_SECRET="rzp_test_secret")
+    def test_razorpay_verify_rejects_invalid_signature(self):
+        self.client.force_authenticate(self.customer)
+        response = self.client.post(
+            "/api/payments/razorpay/verify",
+            {
+                "razorpay_order_id": "order_rzp_123",
+                "razorpay_payment_id": "pay_rzp_456",
+                "razorpay_signature": "tampered_signature",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)

@@ -40,6 +40,7 @@ from .models import (
     ContactMessage,
     CustomerProfile,
     DeliveryChargeSettings,
+    DistrictDeliveryCharge,
     Order,
     OrderItem,
     Payment,
@@ -55,6 +56,7 @@ from .serializers import (
     ContactMessageSerializer,
     CustomerRegistrationSerializer,
     DeliveryChargeSettingsSerializer,
+    DistrictDeliveryChargeSerializer,
     OrderCreateSerializer,
     OrderSerializer,
     ProductImageSerializer,
@@ -227,40 +229,77 @@ def _delivery_quote(address, charge_settings=None):
     if not charge_settings.enabled:
         return {
             "enabled": False,
+            "district": None,
             "rate_per_km": charge_settings.rate_per_km,
             "distance_km": None,
             "cod_charge": Decimal("0.00"),
         }
-    destination = ", ".join(
-        part
-        for part in (
-            address["addressLine1"],
-            address.get("addressLine2", ""),
-            address["city"],
-            address["state"],
-            address["postalCode"],
-            address.get("country", "India"),
+
+    district_name = str(address.get("district") or "").strip()
+    city_name = str(address.get("city") or "").strip()
+
+    # 1. Check Tamil Nadu District Delivery Charges
+    matched_district = None
+    if district_name:
+        matched_district = DistrictDeliveryCharge.objects.filter(name__iexact=district_name, is_active=True).first()
+    if not matched_district and city_name:
+        matched_district = DistrictDeliveryCharge.objects.filter(name__iexact=city_name, is_active=True).first()
+
+    if matched_district:
+        return {
+            "enabled": True,
+            "district": matched_district.name,
+            "cod_charge": matched_district.charge,
+            "distance_km": None,
+            "rate_per_km": None,
+        }
+
+    # 2. Try distance if rate_per_km > 0
+    try:
+        destination = ", ".join(
+            part
+            for part in (
+                address.get("addressLine1", ""),
+                address.get("addressLine2", ""),
+                address.get("city", ""),
+                address.get("district", ""),
+                address.get("state", ""),
+                address.get("postalCode", ""),
+                address.get("country", "India"),
+            )
+            if part
         )
-        if part
-    )
-    destination_fallback = ", ".join(
-        part
-        for part in (
-            address["postalCode"],
-            address["city"],
-            address["state"],
-            address.get("country", "India"),
+        destination_fallback = ", ".join(
+            part
+            for part in (
+                address.get("postalCode", ""),
+                address.get("city", ""),
+                address.get("state", ""),
+                address.get("country", "India"),
+            )
+            if part
         )
-        if part
-    )
-    meters = _driving_distance_meters(destination, destination_fallback)
-    distance_km = (Decimal(meters) / Decimal("1000")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    cod_charge = (distance_km * charge_settings.rate_per_km).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        if charge_settings.rate_per_km > 0 and destination:
+            meters = _driving_distance_meters(destination, destination_fallback)
+            distance_km = (Decimal(meters) / Decimal("1000")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            cod_charge = (distance_km * charge_settings.rate_per_km).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            return {
+                "enabled": True,
+                "district": district_name or city_name or None,
+                "rate_per_km": charge_settings.rate_per_km,
+                "distance_km": distance_km,
+                "cod_charge": cod_charge,
+            }
+    except Exception:
+        pass
+
+    default_charge = getattr(charge_settings, "default_charge", Decimal("50.00"))
     return {
         "enabled": True,
-        "rate_per_km": charge_settings.rate_per_km,
-        "distance_km": distance_km,
-        "cod_charge": cod_charge,
+        "district": district_name or city_name or "Standard Delivery",
+        "rate_per_km": None,
+        "distance_km": None,
+        "cod_charge": default_charge,
     }
 
 
@@ -268,13 +307,16 @@ def _session_response(user, http_status=status.HTTP_200_OK):
     refresh = RefreshToken.for_user(user)
     if user.is_staff:
         refresh["role"] = "admin"
+        role = "admin"
     else:
         refresh["role"] = "customer"
+        role = "customer"
     return Response(
         {
             "token": str(refresh.access_token),
             "refresh": str(refresh),
             "user": UserSummarySerializer(user).data,
+            "role": role,
         },
         status=http_status,
     )
@@ -386,7 +428,7 @@ def login(request):
         return Response({"error": "Email and password are required."}, status=status.HTTP_400_BAD_REQUEST)
     user = authenticate(request, email=email, password=password)
     is_admin_login = request.path.endswith("/admin/login")
-    if not user or not user.is_active or (is_admin_login != user.is_staff):
+    if not user or not user.is_active or (is_admin_login and not user.is_staff):
         return Response({"error": "Email or password is incorrect."}, status=status.HTTP_401_UNAUTHORIZED)
     return _session_response(user)
 
@@ -611,6 +653,104 @@ def wishlist(request, product_id=None):
     return Response({"items": WishlistSerializer(saved, many=True, context={"request": request}).data})
 
 
+class CheckoutValidationError(Exception):
+    def __init__(self, message, status_code=status.HTTP_400_BAD_REQUEST):
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+
+
+def _validate_cart_items_for_checkout(items, customizations, lock_products=False):
+    if not items:
+        raise CheckoutValidationError("Your cart is empty.")
+    if any(not item.product.is_active for item in items):
+        raise CheckoutValidationError(
+            "A product in your cart is no longer available. Remove it before checkout.",
+            status_code=status.HTTP_409_CONFLICT,
+        )
+    cart_product_ids = {item.product_id for item in items}
+    if any(product_id not in cart_product_ids for product_id in customizations):
+        raise CheckoutValidationError("Customization was submitted for a product not in your cart.")
+    subtotal = Decimal("0.00")
+    products_by_id = {}
+    for item in items:
+        product = Product.objects.select_for_update().get(pk=item.product_id) if lock_products else item.product
+        if item.quantity > product.stock:
+            raise CheckoutValidationError(
+                f"{product.name} no longer has enough stock.",
+                status_code=status.HTTP_409_CONFLICT,
+            )
+        customization = customizations.get(item.product_id)
+        if customization and (customization.get("giftMessage") or customization.get("printedName")) and not product.is_customizable:
+            raise CheckoutValidationError(f"{product.name} does not support customization.")
+        subtotal += product.discounted_price * item.quantity
+        products_by_id[item.product_id] = product
+    return subtotal, products_by_id
+
+
+def _create_order_from_cart(
+    user,
+    validated_data,
+    delivery_quote,
+    payment_method="cash_on_delivery",
+    payment_status=Order.PaymentStatus.PENDING,
+    order_status=Order.Status.PENDING,
+    provider_reference="",
+    expected_paid_paise=None,
+):
+    customizations = {item["productId"]: item for item in validated_data.get("customizations", [])}
+    with transaction.atomic():
+        Cart.objects.get_or_create(user=user)
+        cart_object = Cart.objects.select_for_update().get(user=user)
+        items = list(
+            CartItem.objects.select_for_update()
+            .filter(cart=cart_object)
+            .select_related("product")
+            .order_by("id")
+        )
+        subtotal, products_by_id = _validate_cart_items_for_checkout(items, customizations, lock_products=True)
+        total = subtotal + delivery_quote["cod_charge"]
+        if expected_paid_paise is not None:
+            expected_paise = int((total * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+            if expected_paise != expected_paid_paise:
+                raise CheckoutValidationError("Payment amount does not match the current cart total.")
+        order = Order.objects.create(
+            user=user,
+            status=order_status,
+            subtotal=subtotal,
+            delivery_charge=delivery_quote["cod_charge"],
+            delivery_distance_km=delivery_quote["distance_km"],
+            shipping_address=validated_data["shippingAddress"],
+            notes=validated_data.get("notes", ""),
+            payment_method=payment_method,
+            payment_status=payment_status,
+        )
+        Payment.objects.create(
+            order=order,
+            method=payment_method,
+            status=payment_status,
+            amount=order.total,
+            provider_reference=provider_reference,
+        )
+        for item in items:
+            product = products_by_id[item.product_id]
+            customization = customizations.get(item.product_id, {})
+            OrderItem.objects.create(
+                order=order,
+                product=product,
+                product_name=product.name,
+                unit_price=product.discounted_price,
+                quantity=item.quantity,
+                gift_message=customization.get("giftMessage", ""),
+                printed_name=customization.get("printedName", ""),
+            )
+            product.stock -= item.quantity
+            product.save(update_fields=["stock", "updated_at"])
+        cart_object.items.all().delete()
+    order.refresh_from_db()
+    return order
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def create_order(request):
@@ -622,65 +762,17 @@ def create_order(request):
         delivery_quote = _delivery_quote(serializer.validated_data["shippingAddress"])
     except DeliveryDistanceError as error:
         return Response({"error": str(error)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-    customizations = {item["productId"]: item for item in serializer.validated_data.get("customizations", [])}
     try:
-        with transaction.atomic():
-            Cart.objects.get_or_create(user=request.user)
-            cart_object = Cart.objects.select_for_update().get(user=request.user)
-            items = list(
-                CartItem.objects.select_for_update()
-                .filter(cart=cart_object)
-                .select_related("product")
-                .order_by("id")
-            )
-            if not items:
-                return Response({"error": "Your cart is empty."}, status=status.HTTP_400_BAD_REQUEST)
-            if any(not item.product.is_active for item in items):
-                return Response({"error": "A product in your cart is no longer available. Remove it before checkout."}, status=status.HTTP_409_CONFLICT)
-            cart_product_ids = {item.product_id for item in items}
-            if any(product_id not in cart_product_ids for product_id in customizations):
-                return Response({"error": "Customization was submitted for a product not in your cart."}, status=status.HTTP_400_BAD_REQUEST)
-            subtotal = Decimal("0.00")
-            for item in items:
-                product = Product.objects.select_for_update().get(pk=item.product_id)
-                if item.quantity > product.stock:
-                    return Response({"error": f"{product.name} no longer has enough stock."}, status=status.HTTP_409_CONFLICT)
-                customization = customizations.get(item.product_id)
-                if customization and (customization["giftMessage"] or customization["printedName"]) and not product.is_customizable:
-                    return Response({"error": f"{product.name} does not support customization."}, status=status.HTTP_400_BAD_REQUEST)
-                subtotal += product.discounted_price * item.quantity
-            order = Order.objects.create(
-                user=request.user,
-                subtotal=subtotal,
-                delivery_charge=delivery_quote["cod_charge"],
-                delivery_distance_km=delivery_quote["distance_km"],
-                shipping_address=serializer.validated_data["shippingAddress"],
-                notes=serializer.validated_data.get("notes", ""),
-            )
-            Payment.objects.create(order=order, amount=order.total)
-            for item in items:
-                product = Product.objects.select_for_update().get(pk=item.product_id)
-                customization = customizations.get(item.product_id, {})
-                OrderItem.objects.create(
-                    order=order,
-                    product=product,
-                    product_name=product.name,
-                    unit_price=product.discounted_price,
-                    quantity=item.quantity,
-                    gift_message=customization.get("giftMessage", ""),
-                    printed_name=customization.get("printedName", ""),
-                )
-                product.stock -= item.quantity
-                product.save(update_fields=["stock", "updated_at"])
-            cart_object.items.all().delete()
+        order = _create_order_from_cart(request.user, serializer.validated_data, delivery_quote)
+    except CheckoutValidationError as error:
+        return Response({"error": error.message}, status=error.status_code)
     except Cart.DoesNotExist:
         return Response({"error": "Your cart is empty."}, status=status.HTTP_400_BAD_REQUEST)
-    order.refresh_from_db()
     return Response({"order": OrderSerializer(order).data}, status=status.HTTP_201_CREATED)
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([AllowAny])
 def delivery_quote(request):
     serializer = ShippingAddressSerializer(data=request.data.get("shippingAddress", {}))
     serializer.is_valid(raise_exception=True)
@@ -716,9 +808,12 @@ def cancel_order(request, order_id):
             if item.product_id:
                 Product.objects.filter(pk=item.product_id).update(stock=F("stock") + item.quantity)
         order.status = Order.Status.CANCELLED
-        order.payment_status = Order.PaymentStatus.FAILED
-        order.save(update_fields=["status", "payment_status", "updated_at"])
-        Payment.objects.filter(order=order, status=Payment.Status.PENDING).update(status=Payment.Status.FAILED)
+        if order.payment_status != Order.PaymentStatus.PAID:
+            order.payment_status = Order.PaymentStatus.FAILED
+            order.save(update_fields=["status", "payment_status", "updated_at"])
+            Payment.objects.filter(order=order, status=Payment.Status.PENDING).update(status=Payment.Status.FAILED)
+        else:
+            order.save(update_fields=["status", "updated_at"])
     order.refresh_from_db()
     return Response({"order": OrderSerializer(order).data})
 
@@ -876,6 +971,18 @@ def admin_product_image_detail(request, product_id, image_id):
     })
 
 
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def districts_list(request):
+    districts = DistrictDeliveryCharge.objects.filter(is_active=True).order_by("name")
+    settings_obj = DeliveryChargeSettings.get_solo()
+    return Response({
+        "enabled": settings_obj.enabled,
+        "default_charge": settings_obj.default_charge,
+        "districts": DistrictDeliveryChargeSerializer(districts, many=True).data
+    })
+
+
 @api_view(["GET", "PUT"])
 @permission_classes([IsAuthenticated])
 def admin_delivery_charge_settings(request):
@@ -884,13 +991,53 @@ def admin_delivery_charge_settings(request):
         return denied
     charge_settings = DeliveryChargeSettings.get_solo()
     if request.method == "PUT":
-        serializer = DeliveryChargeSettingsSerializer(charge_settings, data=request.data)
+        serializer = DeliveryChargeSettingsSerializer(charge_settings, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         charge_settings = serializer.save()
+
+        district_charges = request.data.get("district_charges")
+        if isinstance(district_charges, list):
+            for item in district_charges:
+                d_id = item.get("id")
+                d_charge = item.get("charge")
+                d_active = item.get("is_active", True)
+                if d_id is not None and d_charge is not None:
+                    DistrictDeliveryCharge.objects.filter(id=d_id).update(charge=d_charge, is_active=d_active)
+
+    districts = DistrictDeliveryCharge.objects.all().order_by("name")
     return Response({
         **DeliveryChargeSettingsSerializer(charge_settings).data,
-        "distance_service_configured": True,
-        "distance_provider": "Google Maps" if settings.GOOGLE_MAPS_API_KEY else "OpenStreetMap + OSRM",
+        "districts": DistrictDeliveryChargeSerializer(districts, many=True).data,
+    })
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def admin_districts_bulk_update(request):
+    denied = _admin_only(request)
+    if denied:
+        return denied
+    flat_rate = request.data.get("flat_rate")
+    if flat_rate is not None:
+        try:
+            rate = Decimal(str(flat_rate))
+            DistrictDeliveryCharge.objects.all().update(charge=rate)
+        except Exception as e:
+            return Response({"error": f"Invalid flat rate: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+
+    district_charges = request.data.get("district_charges")
+    if isinstance(district_charges, list):
+        for item in district_charges:
+            d_id = item.get("id")
+            d_charge = item.get("charge")
+            d_active = item.get("is_active", True)
+            if d_id is not None and d_charge is not None:
+                DistrictDeliveryCharge.objects.filter(id=d_id).update(charge=d_charge, is_active=d_active)
+
+    districts = DistrictDeliveryCharge.objects.all().order_by("name")
+    return Response({
+        "districts": DistrictDeliveryChargeSerializer(districts, many=True).data,
+        "message": "District delivery charges updated successfully."
     })
 
 
@@ -1151,3 +1298,140 @@ def admin_sales_pdf(request):
         f"Average order value: INR {average}",
     ]
     return _pdf_response("vedhika-sales-report.pdf", "VEDHIKA BRAND Sales Report", lines)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def create_razorpay_order(request):
+    """Create a Razorpay order from the authenticated user's cart and server-calculated delivery charge."""
+    import razorpay
+
+    key_id = settings.RAZORPAY_KEY_ID
+    key_secret = settings.RAZORPAY_KEY_SECRET
+    if not key_id or not key_secret:
+        return Response({"error": "Payment gateway is not configured."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    if "shippingAddress" in request.data:
+        serializer = OrderCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            delivery_quote = _delivery_quote(serializer.validated_data["shippingAddress"])
+        except DeliveryDistanceError as error:
+            return Response({"error": str(error)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        delivery_charge = delivery_quote["cod_charge"]
+        customizations = {item["productId"]: item for item in serializer.validated_data.get("customizations", [])}
+    else:
+        try:
+            delivery_charge = Decimal(str(request.data.get("deliveryCharge", "0") or "0"))
+        except InvalidOperation:
+            return Response({"error": "Invalid delivery charge."}, status=status.HTTP_400_BAD_REQUEST)
+        if delivery_charge < 0:
+            return Response({"error": "Delivery charge cannot be negative."}, status=status.HTTP_400_BAD_REQUEST)
+        customizations = {}
+
+    try:
+        cart = Cart.objects.get(user=request.user)
+    except Cart.DoesNotExist:
+        return Response({"error": "Your cart is empty."}, status=status.HTTP_400_BAD_REQUEST)
+    items = list(cart.items.select_related("product").order_by("id"))
+    try:
+        subtotal, _ = _validate_cart_items_for_checkout(items, customizations, lock_products=False)
+    except CheckoutValidationError as error:
+        return Response({"error": error.message}, status=error.status_code)
+
+    total = subtotal + delivery_charge
+    amount_paise = int((total * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    if amount_paise < 100:
+        return Response({"error": "Order total must be at least ₹1.00 for online payment."}, status=status.HTTP_400_BAD_REQUEST)
+
+    client = razorpay.Client(auth=(key_id, key_secret))
+    try:
+        rzp_order = client.order.create({
+            "amount": amount_paise,
+            "currency": "INR",
+            "receipt": f"vedhika_{request.user.id}_{int(time.time())}",
+            "payment_capture": 1,
+        })
+    except Exception as exc:
+        logger.error("Razorpay order creation failed: %s", exc)
+        return Response({"error": "Could not connect to payment gateway. Please try again."}, status=status.HTTP_502_BAD_GATEWAY)
+    return Response({
+        "razorpay_order_id": rzp_order["id"],
+        "amount": amount_paise,
+        "currency": "INR",
+        "key_id": key_id,
+    })
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def verify_razorpay_payment(request):
+    """Verify Razorpay payment signature and captured amount, place the order, and clear the cart."""
+    import hashlib
+    import hmac
+    import razorpay
+
+    key_id = settings.RAZORPAY_KEY_ID
+    key_secret = settings.RAZORPAY_KEY_SECRET
+    if not key_id or not key_secret:
+        return Response({"error": "Payment gateway is not configured."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    razorpay_order_id = str(request.data.get("razorpay_order_id") or "").strip()
+    razorpay_payment_id = str(request.data.get("razorpay_payment_id") or "").strip()
+    razorpay_signature = str(request.data.get("razorpay_signature") or "").strip()
+    if not razorpay_order_id or not razorpay_payment_id or not razorpay_signature:
+        return Response({"error": "Incomplete Razorpay payment verification details."}, status=status.HTTP_400_BAD_REQUEST)
+
+    generated_signature = hmac.new(
+        key_secret.encode("utf-8"),
+        msg=f"{razorpay_order_id}|{razorpay_payment_id}".encode("utf-8"),
+        digestmod=hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(generated_signature, razorpay_signature):
+        return Response({"error": "Payment verification failed. Invalid signature."}, status=status.HTTP_400_BAD_REQUEST)
+
+    existing_payment = Payment.objects.select_related("order").filter(provider_reference=razorpay_payment_id).first()
+    if existing_payment:
+        if existing_payment.order.user_id != request.user.id:
+            return Response({"error": "Payment reference belongs to another account."}, status=status.HTTP_403_FORBIDDEN)
+        return Response({"order": OrderSerializer(existing_payment.order).data}, status=status.HTTP_200_OK)
+
+    serializer = OrderCreateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    try:
+        delivery_quote = _delivery_quote(serializer.validated_data["shippingAddress"])
+    except DeliveryDistanceError as error:
+        return Response({"error": str(error)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    client = razorpay.Client(auth=(key_id, key_secret))
+    try:
+        rzp_payment = client.payment.fetch(razorpay_payment_id)
+    except Exception as exc:
+        logger.error("Razorpay payment fetch failed: %s", exc)
+        return Response({"error": "Could not verify payment with Razorpay. Please try again."}, status=status.HTTP_502_BAD_GATEWAY)
+
+    if rzp_payment.get("order_id") != razorpay_order_id:
+        return Response({"error": "Payment verification failed. Order mismatch."}, status=status.HTTP_400_BAD_REQUEST)
+    if rzp_payment.get("currency") != "INR" or rzp_payment.get("status") not in ("captured", "authorized"):
+        return Response({"error": "Payment has not been completed."}, status=status.HTTP_400_BAD_REQUEST)
+    paid_paise = int(rzp_payment.get("amount", 0))
+
+    try:
+        order = _create_order_from_cart(
+            request.user,
+            serializer.validated_data,
+            delivery_quote,
+            payment_method="razorpay",
+            payment_status=Order.PaymentStatus.PAID,
+            order_status=Order.Status.CONFIRMED,
+            provider_reference=razorpay_payment_id,
+            expected_paid_paise=paid_paise,
+        )
+    except CheckoutValidationError as error:
+        return Response({"error": error.message}, status=error.status_code)
+    except Cart.DoesNotExist:
+        return Response({"error": "Your cart is empty."}, status=status.HTTP_400_BAD_REQUEST)
+    except IntegrityError as exc:
+        logger.error("Order creation failed: %s", exc)
+        return Response({"error": "Order could not be placed. Please try again."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    return Response({"order": OrderSerializer(order).data}, status=status.HTTP_201_CREATED)

@@ -7,6 +7,7 @@ from .models import (
     ContactMessage,
     CustomerProfile,
     DeliveryChargeSettings,
+    DistrictDeliveryCharge,
     Order,
     OrderItem,
     Product,
@@ -32,6 +33,7 @@ class ShippingAddressSerializer(serializers.Serializer):
     addressLine1 = serializers.CharField(min_length=4, max_length=200)
     addressLine2 = serializers.CharField(max_length=200, required=False, allow_blank=True, default="")
     city = serializers.CharField(min_length=2, max_length=100)
+    district = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
     state = serializers.CharField(min_length=2, max_length=100)
     postalCode = serializers.CharField(min_length=3, max_length=20)
     country = serializers.CharField(min_length=2, max_length=100, default="India")
@@ -40,7 +42,7 @@ class ShippingAddressSerializer(serializers.Serializer):
 class CustomerRegistrationSerializer(serializers.Serializer):
     name = serializers.CharField(min_length=2, max_length=120, trim_whitespace=True)
     email = serializers.EmailField()
-    password = serializers.CharField(min_length=10, max_length=128, write_only=True)
+    password = serializers.CharField(min_length=6, max_length=128, write_only=True)
     phone = serializers.CharField(max_length=30, required=False, allow_blank=True, default="")
     address = ShippingAddressSerializer(required=False)
 
@@ -170,7 +172,13 @@ class OrderCreateSerializer(serializers.Serializer):
 class DeliveryChargeSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = DeliveryChargeSettings
-        fields = ["enabled", "rate_per_km"]
+        fields = ["enabled", "default_charge", "rate_per_km"]
+
+
+class DistrictDeliveryChargeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DistrictDeliveryCharge
+        fields = ["id", "name", "charge", "is_active", "updated_at"]
 
 
 class OrderItemSerializer(serializers.ModelSerializer):

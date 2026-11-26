@@ -188,7 +188,8 @@ class Order(models.Model):
 
 
 class DeliveryChargeSettings(models.Model):
-    enabled = models.BooleanField(default=False)
+    enabled = models.BooleanField(default=True)
+    default_charge = models.DecimalField(max_digits=8, decimal_places=2, default=50, validators=[MinValueValidator(0)])
     rate_per_km = models.DecimalField(max_digits=8, decimal_places=2, default=1, validators=[MinValueValidator(0)])
 
     @classmethod
@@ -197,7 +198,21 @@ class DeliveryChargeSettings(models.Model):
         return settings_object
 
     def __str__(self):
-        return "Distance-based COD charges"
+        return "Delivery charge settings"
+
+
+class DistrictDeliveryCharge(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    charge = models.DecimalField(max_digits=8, decimal_places=2, default=50, validators=[MinValueValidator(0)])
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.name} - ₹{self.charge}"
 
 
 class OrderItem(models.Model):
