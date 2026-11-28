@@ -1,3 +1,6 @@
+import urllib.parse
+
+from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
@@ -17,6 +20,38 @@ from .models import (
     User,
     Wishlist,
 )
+
+
+def _build_media_url(raw_url, request):
+    """Build a canonical media URL safe behind SSL proxies that omit Host or X-Forwarded-Proto."""
+    if not raw_url:
+        return ""
+    if raw_url.startswith(("http://", "https://")):
+        parsed = urllib.parse.urlparse(raw_url)
+        if parsed.hostname in ("127.0.0.1", "localhost") and parsed.path.startswith("/media/") and (not settings.DEBUG or parsed.port == 443):
+            raw_url = parsed.path
+        else:
+            return raw_url
+
+    public_origin = getattr(settings, "PUBLIC_API_ORIGIN", "")
+    if public_origin:
+        return f"{public_origin}{raw_url}"
+
+    if request:
+        host = request.get_host()
+        hostname = host.split(":")[0]
+        if hostname in ("127.0.0.1", "localhost") and (not settings.DEBUG or host.endswith(":443")):
+            public_hosts = [
+                h for h in settings.ALLOWED_HOSTS
+                if h not in ("*", "localhost", "127.0.0.1") and not h.startswith(".")
+            ]
+            if public_hosts:
+                return f"https://{public_hosts[0]}{raw_url}"
+        uri = request.build_absolute_uri(raw_url)
+        if not settings.DEBUG and uri.startswith("http://") and hostname not in ("127.0.0.1", "localhost"):
+            return f"https://{uri[7:]}"
+        return uri
+    return raw_url
 
 
 class UserSummarySerializer(serializers.ModelSerializer):
@@ -93,13 +128,10 @@ class CategorySerializer(serializers.ModelSerializer):
         read_only_fields = ["slug", "final_price", "product_count"]
 
     def get_image_url(self, obj):
+        request = self.context.get("request")
         if obj.image:
-            url = obj.image.url
-            if url.startswith(("http://", "https://")):
-                return url
-            request = self.context.get("request")
-            return request.build_absolute_uri(url) if request else url
-        return obj.image_url or ""
+            return _build_media_url(obj.image.url, request)
+        return _build_media_url(obj.image_url or "", request)
 
 
 class ProductImageSerializer(serializers.ModelSerializer):
@@ -111,11 +143,7 @@ class ProductImageSerializer(serializers.ModelSerializer):
         fields = ["id", "url", "alt_text", "primary"]
 
     def get_url(self, obj):
-        url = obj.url
-        if not url or url.startswith(("http://", "https://")):
-            return url
-        request = self.context.get("request")
-        return request.build_absolute_uri(url) if request else url
+        return _build_media_url(obj.url, self.context.get("request"))
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -150,11 +178,7 @@ class ProductSerializer(serializers.ModelSerializer):
         image = obj.images.order_by("-is_primary", "id").first()
         if not image:
             return ""
-        url = image.url
-        if url.startswith(("http://", "https://")):
-            return url
-        request = self.context.get("request")
-        return request.build_absolute_uri(url) if request else url
+        return _build_media_url(image.url, self.context.get("request"))
 
 
 class CartItemSerializer(serializers.ModelSerializer):
@@ -179,11 +203,7 @@ class CartItemSerializer(serializers.ModelSerializer):
         image = obj.product.images.order_by("-is_primary", "id").first()
         if not image:
             return ""
-        url = image.url
-        if url.startswith(("http://", "https://")):
-            return url
-        request = self.context.get("request")
-        return request.build_absolute_uri(url) if request else url
+        return _build_media_url(image.url, self.context.get("request"))
 
 
 class OrderCustomizationSerializer(serializers.Serializer):

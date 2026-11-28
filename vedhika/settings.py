@@ -154,6 +154,7 @@ EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() == "true"
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "VEDHIKA BRAND <no-reply@example.invalid>")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://vedhikareturngift.com").rstrip("/")
+PUBLIC_API_ORIGIN = os.getenv("PUBLIC_API_ORIGIN", "").rstrip("/")
 REFRESH_SECRET = os.getenv("REFRESH_SECRET", "")
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "")

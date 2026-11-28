@@ -241,6 +241,7 @@ def _delivery_quote(address, charge_settings=None):
     city_name = str(address.get("city") or "").strip()
 
     # 1. Check Tamil Nadu District Delivery Charges
+    DistrictDeliveryCharge.ensure_defaults()
     matched_district = None
     if district_name:
         matched_district = DistrictDeliveryCharge.objects.filter(name__iexact=district_name, is_active=True).first()
@@ -1004,6 +1005,7 @@ def admin_product_image_detail(request, product_id, image_id):
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def districts_list(request):
+    DistrictDeliveryCharge.ensure_defaults()
     districts = DistrictDeliveryCharge.objects.filter(is_active=True).order_by("name")
     settings_obj = DeliveryChargeSettings.get_solo()
     return Response({
@@ -1019,6 +1021,7 @@ def admin_delivery_charge_settings(request):
     denied = _admin_only(request)
     if denied:
         return denied
+    DistrictDeliveryCharge.ensure_defaults()
     charge_settings = DeliveryChargeSettings.get_solo()
     if request.method == "PUT":
         serializer = DeliveryChargeSettingsSerializer(charge_settings, data=request.data, partial=True)

@@ -215,6 +215,48 @@ class DeliveryChargeSettings(models.Model):
         return "Delivery charge settings"
 
 
+TAMIL_NADU_DISTRICTS = (
+    "Ariyalur",
+    "Chengalpattu",
+    "Chennai",
+    "Coimbatore",
+    "Cuddalore",
+    "Dharmapuri",
+    "Dindigul",
+    "Erode",
+    "Kallakurichi",
+    "Kanchipuram",
+    "Kanyakumari",
+    "Karur",
+    "Krishnagiri",
+    "Madurai",
+    "Mayiladuthurai",
+    "Nagapattinam",
+    "Namakkal",
+    "Nilgiris",
+    "Perambalur",
+    "Pudukkottai",
+    "Ramanathapuram",
+    "Ranipet",
+    "Salem",
+    "Sivaganga",
+    "Tenkasi",
+    "Thanjavur",
+    "Theni",
+    "Thoothukudi",
+    "Tiruchirappalli",
+    "Tirunelveli",
+    "Tirupathur",
+    "Tiruppur",
+    "Tiruvallur",
+    "Tiruvannamalai",
+    "Tiruvarur",
+    "Vellore",
+    "Viluppuram",
+    "Virudhunagar",
+)
+
+
 class DistrictDeliveryCharge(models.Model):
     name = models.CharField(max_length=100, unique=True)
     charge = models.DecimalField(max_digits=8, decimal_places=2, default=50, validators=[MinValueValidator(0)])
@@ -224,6 +266,16 @@ class DistrictDeliveryCharge(models.Model):
 
     class Meta:
         ordering = ["name"]
+
+    @classmethod
+    def ensure_defaults(cls):
+        """Seed all 38 Tamil Nadu districts once if the table is empty."""
+        if cls.objects.exists():
+            return
+        cls.objects.bulk_create(
+            [cls(name=name, charge=Decimal("50.00"), is_active=True) for name in TAMIL_NADU_DISTRICTS],
+            ignore_conflicts=True,
+        )
 
     def __str__(self):
         return f"{self.name} - ₹{self.charge}"

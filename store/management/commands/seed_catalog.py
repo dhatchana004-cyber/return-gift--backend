@@ -1,7 +1,7 @@
 from django.core.management.base import BaseCommand
 from django.utils.text import slugify
 
-from store.models import Category, Product, ProductImage
+from store.models import Category, DistrictDeliveryCharge, Product, ProductImage
 
 
 COLLECTIONS = [
@@ -113,4 +113,5 @@ class Command(BaseCommand):
                     is_primary=True,
                 )
                 created_count += 1
+        DistrictDeliveryCharge.ensure_defaults()
         self.stdout.write(self.style.SUCCESS(f"VEDHIKA BRAND catalog ready. Added {created_count} new products."))
